@@ -113,7 +113,7 @@ function App() {
       </div>
 
       {/* Main Grid */}
-      <div className="z-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-7xl mb-12">
+      <div className="z-10 flex flex-wrap justify-center gap-6 w-full max-w-7xl mb-12">
         {tracks.map(track => (
           <TrackColumn
             key={track.id}
