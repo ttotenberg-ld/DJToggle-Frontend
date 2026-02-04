@@ -7,10 +7,11 @@ import { PATTERNS } from './audio/patterns';
 import { cn } from './lib/utils';
 import djAstronaut from './assets/DJToggle.png';
 
-const TRACKS = [
-  { id: 'bass', title: 'Bass', options: [{ id: 'option1', name: 'Deep Pulse' }, { id: 'option2', name: 'Driving Saw' }, { id: 'option3', name: 'Funky Square' }] },
-  { id: 'drums', title: 'Drums', options: [{ id: 'option1', name: 'Basic 4/4' }, { id: 'option2', name: 'Breakbeat' }, { id: 'option3', name: 'Double Time' }] },
-  { id: 'leadArrangement', title: 'Melody', options: [{ id: 'option1', name: 'Main Theme' }, { id: 'option2', name: 'Counterpoint' }, { id: 'option3', name: 'Minimal' }] },
+// Initial fallback tracks (minimal structure)
+const FALLBACK_TRACKS = [
+  { id: 'bass', title: 'Bass', options: [{ id: 'option1', name: 'Option 1' }, { id: 'option2', name: 'Option 2' }, { id: 'option3', name: 'Option 3' }] },
+  { id: 'drums', title: 'Drums', options: [{ id: 'option1', name: 'Option 1' }, { id: 'option2', name: 'Option 2' }, { id: 'option3', name: 'Option 3' }] },
+  { id: 'leadArrangement', title: 'Melody', options: [{ id: 'option1', name: 'Option 1' }, { id: 'option2', name: 'Option 2' }, { id: 'option3', name: 'Option 3' }] },
 ];
 
 function App() {
@@ -20,6 +21,36 @@ function App() {
 
   // Local state to track what user voted for (optional visual feedback)
   const [userVotes, setUserVotes] = useState({});
+  const [tracks, setTracks] = useState(FALLBACK_TRACKS);
+
+  useEffect(() => {
+    // Fetch dynamic configuration from our backend proxy
+    fetch('/api/config')
+      .then(res => res.json())
+      .then(data => {
+        // Map the API response to our UI structure
+        const newTracks = [];
+
+        // Define display titles mapping
+        const titles = { bass: 'Bass', drums: 'Drums', leadArrangement: 'Melody' };
+
+        // Process known keys in specific order or strictly from return
+        ['bass', 'drums', 'leadArrangement'].forEach(key => {
+          if (data[key]) {
+            newTracks.push({
+              id: key,
+              title: titles[key] || key,
+              options: data[key].options
+            });
+          }
+        });
+
+        if (newTracks.length > 0) {
+          setTracks(newTracks);
+        }
+      })
+      .catch(err => console.error("Failed to load track config:", err));
+  }, []);
 
   useEffect(() => {
     // Construct the combined pattern based on active flags
@@ -83,7 +114,7 @@ function App() {
 
       {/* Main Grid */}
       <div className="z-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-7xl mb-12">
-        {TRACKS.map(track => (
+        {tracks.map(track => (
           <TrackColumn
             key={track.id}
             title={track.title}
