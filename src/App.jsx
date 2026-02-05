@@ -13,6 +13,7 @@ const FALLBACK_TRACKS = [
   { id: 'drums', title: 'Drums', options: [{ id: 'option1', name: 'Option 1' }, { id: 'option2', name: 'Option 2' }, { id: 'option3', name: 'Option 3' }] },
   { id: 'leadArrangement', title: 'Melody', options: [{ id: 'option1', name: 'Option 1' }, { id: 'option2', name: 'Option 2' }, { id: 'option3', name: 'Option 3' }] },
 ];
+const CONFIG_POLL_MS = 2000;
 
 function App() {
   const flags = useFlags();
@@ -24,37 +25,63 @@ function App() {
   const [tracks, setTracks] = useState(FALLBACK_TRACKS);
 
   useEffect(() => {
-    // Fetch dynamic configuration from our backend proxy
-    fetch('/api/config')
-      .then(res => res.json())
-      .then(data => {
-        // Map the API response to our UI structure
-        const newTracks = [];
+    let isMounted = true;
+    let pollTimer = null;
+    let controller = new AbortController();
 
-        // Define display titles mapping
-        const titles = { bassArrangement: 'Bass', drumArrangement: 'Drums', leadArrangement: 'Melody' };
+    const isSilenceOption = (option) => {
+      const label = String(option?.name || option?.value || '').trim().toLowerCase();
+      return label === 'silence';
+    };
 
-        const isSilenceOption = (option) => {
-          const label = String(option?.name || option?.value || '').trim().toLowerCase();
-          return label === 'silence';
-        };
+    const fetchConfig = () => {
+      controller.abort();
+      controller = new AbortController();
 
-        // Process known keys in specific order or strictly from return
-        ['bassArrangement', 'drumArrangement', 'leadArrangement'].forEach(key => {
-          if (data[key]) {
-            newTracks.push({
-              id: key,
-              title: titles[key] || key,
-              options: (data[key].options || []).filter(option => !isSilenceOption(option))
-            });
+      // Fetch dynamic configuration from our backend proxy
+      fetch('/api/config', { signal: controller.signal })
+        .then(res => res.json())
+        .then(data => {
+          if (!isMounted) return;
+
+          // Map the API response to our UI structure
+          const newTracks = [];
+
+          // Define display titles mapping
+          const titles = { bassArrangement: 'Bass', drumArrangement: 'Drums', leadArrangement: 'Melody' };
+
+          // Process known keys in specific order or strictly from return
+          ['bassArrangement', 'drumArrangement', 'leadArrangement'].forEach(key => {
+            if (data[key]) {
+              newTracks.push({
+                id: key,
+                title: titles[key] || key,
+                options: (data[key].options || []).filter(option => !isSilenceOption(option))
+              });
+            }
+          });
+
+          if (newTracks.length > 0) {
+            setTracks(newTracks);
+          }
+        })
+        .catch(err => {
+          if (err?.name !== 'AbortError') {
+            console.error("Failed to load track config:", err);
           }
         });
+    };
 
-        if (newTracks.length > 0) {
-          setTracks(newTracks);
-        }
-      })
-      .catch(err => console.error("Failed to load track config:", err));
+    fetchConfig();
+    pollTimer = setInterval(fetchConfig, CONFIG_POLL_MS);
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+      if (pollTimer) {
+        clearInterval(pollTimer);
+      }
+    };
   }, []);
 
   useEffect(() => {
