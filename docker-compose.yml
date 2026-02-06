@@ -1,6 +1,10 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_LAUNCHDARKLY_CLIENT_ID: ${VITE_LAUNCHDARKLY_CLIENT_ID}
+        VITE_STRUDEL_SAMPLES_URL: ${VITE_STRUDEL_SAMPLES_URL}
     ports:
       - "8081:80"
     env_file:

@@ -14,7 +14,7 @@ export function TrackColumn({ title, trackId, options, currentOption, selectedOp
                         label={opt.name}
                         isSelected={selectedOption === opt.id}
                         isWinning={currentOption === opt.id}
-                        onVote={() => onVote(trackId, opt.id)}
+                        onVote={() => onVote(trackId, opt)}
                     />
                 ))}
             </div>

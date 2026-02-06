@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { withLDProvider, useFlags, useLDClient } from 'launchdarkly-react-client-sdk';
 import { useStrudel } from './hooks/useStrudel';
 import { TrackColumn } from './components/TrackColumn';
-import { Controls } from './components/Controls';
 import { PATTERNS } from './audio/patterns';
 import { cn } from './lib/utils';
 import djAstronaut from './assets/DJToggle.png';
@@ -14,6 +13,41 @@ const FALLBACK_TRACKS = [
   { id: 'leadArrangement', title: 'Melody', options: [{ id: 'option1', name: 'Option 1' }, { id: 'option2', name: 'Option 2' }, { id: 'option3', name: 'Option 3' }] },
 ];
 const CONFIG_POLL_MS = 2000;
+const MAX_REROLL_ATTEMPTS = 10;
+
+const getRequestKey = (suffix = '') => {
+  const storage = globalThis.sessionStorage;
+  const storageKey = suffix ? `dj-toggle-request-key:${suffix}` : 'dj-toggle-request-key';
+
+  if (!storage) {
+    const base = globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return suffix ? `${base}-${suffix}` : base;
+  }
+
+  const existing = storage.getItem(storageKey);
+  if (existing) return existing;
+
+  const base = globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const next = suffix ? `${base}-${suffix}` : base;
+  storage.setItem(storageKey, next);
+  return next;
+};
+
+const INITIAL_LD_CONTEXT = {
+  kind: 'multi',
+  user: {
+    key: 'anonymous',
+    anonymous: true,
+  },
+  request: {
+    key: getRequestKey(),
+  },
+};
+
+const createRequestKey = (suffix = '') => {
+  const base = globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return suffix ? `${base}-${suffix}` : base;
+};
 
 function App() {
   const flags = useFlags();
@@ -23,6 +57,7 @@ function App() {
   // Local state to track what user voted for (optional visual feedback)
   const [userVotes, setUserVotes] = useState({});
   const [tracks, setTracks] = useState(FALLBACK_TRACKS);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -40,9 +75,16 @@ function App() {
 
       // Fetch dynamic configuration from our backend proxy
       fetch('/api/config', { signal: controller.signal })
-        .then(res => res.json())
+        .then(res => {
+          if (!res.ok) {
+            throw new Error(`Config fetch failed: ${res.status}`);
+          }
+          return res.json();
+        })
         .then(data => {
           if (!isMounted) return;
+
+          setIsConnected(true);
 
           // Map the API response to our UI structure
           const newTracks = [];
@@ -67,6 +109,7 @@ function App() {
         })
         .catch(err => {
           if (err?.name !== 'AbortError') {
+            setIsConnected(false);
             console.error("Failed to load track config:", err);
           }
         });
@@ -105,14 +148,55 @@ function App() {
     }
   }, [flags, updatePattern]);
 
-  const handleVote = (trackId, optionId) => {
+  const handleVote = async (trackId, option) => {
+    const optionId = option?.id;
+    const desiredVariation = option?.value;
     console.log(`Voting for ${trackId}: ${optionId}`);
 
-    // Send metric to LaunchDarkly
-    // Metric key is 'vote', with custom attributes
-    ldClient.track('vote', { track: trackId, option: optionId });
+    if (ldClient) {
+      let matched = false;
 
-    setUserVotes(prev => ({ ...prev, [trackId]: optionId }));
+      for (let attempt = 0; attempt < MAX_REROLL_ATTEMPTS; attempt += 1) {
+        const requestKey = createRequestKey(`${trackId}-${attempt}`);
+        const context = {
+          kind: 'multi',
+          user: {
+            key: 'anonymous',
+            anonymous: true,
+          },
+          request: {
+            key: requestKey,
+          },
+        };
+
+        try {
+          await ldClient.identify(context);
+          const actual = ldClient.variation(trackId, flags[trackId]);
+          if (!desiredVariation || actual === desiredVariation) {
+            matched = true;
+            break;
+          }
+        } catch (err) {
+          console.error('Failed to identify LaunchDarkly context:', err);
+          break;
+        }
+      }
+
+      if (!matched && desiredVariation) {
+        console.warn(`No variation match for ${trackId} after retries.`);
+      }
+
+      // Send metric to LaunchDarkly
+      // Metric key is 'vote', with custom attributes
+      ldClient.track('vote', { track: trackId, option: optionId });
+      if (typeof ldClient.flush === 'function') {
+        ldClient.flush();
+      }
+    }
+
+    if (optionId) {
+      setUserVotes(prev => ({ ...prev, [trackId]: optionId }));
+    }
 
     // Optional: Visual flair for valid processing
   };
@@ -159,14 +243,9 @@ function App() {
         ))}
       </div>
 
-      {/* Controls */}
-      <div className="z-10 mt-auto mb-8">
-        <Controls isPlaying={isPlaying} onToggle={togglePlay} />
-      </div>
-
       {/* Footer / Status */}
-      <div className="z-10 text-white/30 text-sm font-mono">
-        Connected to LaunchDarkly • {Object.keys(flags).length} Flags Active
+      <div className="z-10 text-white/30 text-sm font-mono mt-auto mb-8">
+        {isConnected ? 'Connected to LaunchDarkly' : 'Disconnected from LaunchDarkly'}
       </div>
     </div>
   );
@@ -174,7 +253,12 @@ function App() {
 
 export default withLDProvider({
   clientSideID: import.meta.env.VITE_LAUNCHDARKLY_CLIENT_ID,
+  context: INITIAL_LD_CONTEXT,
   options: {
     bootstrap: 'localStorage',
+    baseUrl: 'https://clientsdk.launchdarkly.com',
+    streamUrl: 'https://clientstream.launchdarkly.com',
+    eventsUrl: 'https://events.launchdarkly.com',
+    diagnosticOptOut: true,
   },
 })(App);
